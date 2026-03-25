@@ -83,25 +83,38 @@ async def admin_bookings(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("admin_booking_"))
-async def admin_booking_detail(callback: CallbackQuery):
+async def admin_booking_detail(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id, callback.from_user.username):
         await callback.answer("⛔ Доступ запрещён")
         return
     
-    booking_id = int(callback.data.split("_")[-1])
+    await state.clear()
     
-    db = next(get_db())
-    booking = get_booking_by_id(db, booking_id)
-    db.close()
+    try:
+        data = callback.data
+        logger.info(f"Admin callback: {data}")
+        
+        booking_id = int(callback.data.split("_")[-1])
+        
+        db = next(get_db())
+        try:
+            booking = get_booking_by_id(db, booking_id)
+            
+            if not booking:
+                await callback.answer("Запись не найдена", show_alert=True)
+                return
+            
+            from keyboards.main import get_booking_card_text
+            text = get_booking_card_text(booking, show_full_info=True)
+            
+            await callback.message.edit_text(text, reply_markup=get_admin_booking_detail_keyboard(booking_id))
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error in admin_booking_detail: {e}")
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
     
-    if not booking:
-        await callback.answer("Запись не найдена")
-        return
-    
-    from keyboards.main import get_booking_card_text
-    text = get_booking_card_text(booking, show_full_info=True)
-    
-    await callback.message.edit_text(text, reply_markup=get_admin_booking_detail_keyboard(booking_id))
     await callback.answer()
 
 

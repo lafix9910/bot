@@ -380,21 +380,40 @@ async def my_bookings(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("booking_detail_"))
-async def booking_detail(callback: CallbackQuery):
-    booking_id = int(callback.data.split("_")[2])
-    db = next(get_db())
-    bookings = get_user_bookings(db, callback.from_user.id)
-    booking = next((b for b in bookings if b.id == booking_id), None)
-    db.close()
+async def booking_detail(callback: CallbackQuery, state: FSMContext):
+    # Всегда очищаем состояние при нажатии на кнопку
+    await state.clear()
     
-    if not booking:
-        await callback.answer("Запись не найдена")
-        return
+    try:
+        data = callback.data
+        logger.info(f"Callback received: {data}")
+        
+        # Разбираем callback_data: booking_detail_123
+        parts = data.split("_")
+        booking_id = int(parts[2])
+        
+        logger.info(f"Opening booking {booking_id} for user {callback.from_user.id}")
+        
+        db = next(get_db())
+        try:
+            bookings = get_user_bookings(db, callback.from_user.id)
+            booking = next((b for b in bookings if b.id == booking_id), None)
+            
+            if not booking:
+                await callback.answer("Запись не найдена", show_alert=True)
+                return
+            
+            from keyboards.main import get_booking_card_text
+            text = get_booking_card_text(booking, show_full_info=True)
+            
+            await callback.message.edit_text(text, reply_markup=get_booking_detail_keyboard(booking_id, is_admin=False))
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error in booking_detail: {e}")
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
     
-    from keyboards.main import get_booking_card_text
-    text = get_booking_card_text(booking, show_full_info=True)
-    
-    await callback.message.edit_text(text, reply_markup=get_booking_detail_keyboard(booking_id, is_admin=False))
     await callback.answer()
 
 
