@@ -3,9 +3,9 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 import logging
 
-from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, delete_master, get_master_by_id
-from keyboards import get_admin_menu, get_admin_bookings_keyboard, get_admin_booking_actions, get_back_main, get_masters_management_keyboard
-from states import AdminAddMasterState, AdminWorkingHoursState
+from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, delete_master, get_master_by_id, get_services, delete_service, get_service_by_id, create_service
+from keyboards import get_admin_menu, get_admin_bookings_keyboard, get_admin_booking_actions, get_back_main, get_masters_management_keyboard, get_services_management_keyboard
+from states import AdminAddMasterState, AdminWorkingHoursState, AdminAddServiceState
 from config import ADMIN_IDS, ADMIN_USERNAMES
 import config
 
@@ -297,3 +297,96 @@ async def admin_dates(callback: CallbackQuery):
         reply_markup=get_admin_menu()
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_manage_services")
+async def admin_manage_services(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    db = next(get_db())
+    services = get_services(db)
+    db.close()
+    
+    if not services:
+        await callback.message.edit_text(
+            "✨ Нет услуг. Добавьте первую услугу:",
+            reply_markup=get_services_management_keyboard([])
+        )
+    else:
+        await callback.message.edit_text(
+            "✨ Управление услугами:",
+            reply_markup=get_services_management_keyboard(services)
+        )
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_delete_service_"))
+async def admin_delete_service(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    service_id = int(callback.data.split("_")[-1])
+    logger.info(f"Admin deleting service {service_id}")
+    
+    db = next(get_db())
+    service = get_service_by_id(db, service_id)
+    if service:
+        success = delete_service(db, service_id)
+        db.close()
+        if success:
+            await callback.message.edit_text(f"✅ Услуга '{service.name}' удалена!", reply_markup=get_admin_menu())
+        else:
+            await callback.message.edit_text("❌ Не удалось удалить услугу", reply_markup=get_admin_menu())
+    else:
+        db.close()
+        await callback.message.edit_text("❌ Услуга не найдена", reply_markup=get_admin_menu())
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_add_service")
+async def admin_add_service_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    await callback.message.edit_text("✨ Добавление услуги\n\nВведите название услуги:")
+    await state.set_state(AdminAddServiceState.name)
+    await callback.answer()
+
+
+@router.message(AdminAddServiceState.name)
+async def admin_add_service_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text)
+    await message.answer("Введите цену услуги (число):")
+    await state.set_state(AdminAddServiceState.price)
+
+
+@router.message(AdminAddServiceState.price)
+async def admin_add_service_price(message: Message, state: FSMContext):
+    try:
+        price = int(message.text)
+        await state.update_data(price=price)
+        await message.answer("Введите описание услуги (или /skip чтобы пропустить):")
+        await state.set_state(AdminAddServiceState.description)
+    except ValueError:
+        await message.answer("Введите число!")
+
+
+@router.message(AdminAddServiceState.description)
+async def admin_add_service_desc(message: Message, state: FSMContext):
+    data = await state.get_data()
+    description = message.text if message.text != "/skip" else None
+    
+    logger.info(f"Adding service: {data['name']}, price: {data['price']}")
+    
+    db = next(get_db())
+    service = create_service(db, data["name"], data["price"], description)
+    db.close()
+    
+    await message.answer(f"✅ Услуга '{service.name}' за {service.price} ₽ добавлена!", reply_markup=get_admin_menu())
+    await state.clear()

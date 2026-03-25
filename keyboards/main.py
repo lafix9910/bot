@@ -108,6 +108,7 @@ def get_contacts_keyboard():
 def get_admin_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Все записи", callback_data="admin_bookings")],
+        [InlineKeyboardButton(text="✨ Управление услугами", callback_data="admin_manage_services")],
         [InlineKeyboardButton(text="👥 Управление мастерами", callback_data="admin_manage_masters")],
         [InlineKeyboardButton(text="📅 Управление датами", callback_data="admin_dates")],
         [InlineKeyboardButton(text="🔧 Настройки рабочих часов", callback_data="admin_hours")],
@@ -145,6 +146,19 @@ def get_masters_management_keyboard(masters: list):
             callback_data=f"admin_delete_master_{master.id}"
         )
     builder.button(text="➕ Добавить мастера", callback_data="admin_add_master")
+    builder.button(text="◀️ Админ-меню", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_services_management_keyboard(services: list):
+    builder = InlineKeyboardBuilder()
+    for service in services:
+        builder.button(
+            text=f"❌ {service.name} — {service.price} ₽",
+            callback_data=f"admin_delete_service_{service.id}"
+        )
+    builder.button(text="➕ Добавить услугу", callback_data="admin_add_service")
     builder.button(text="◀️ Админ-меню", callback_data="admin_menu")
     builder.adjust(1)
     return builder.as_markup()

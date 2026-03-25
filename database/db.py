@@ -239,3 +239,24 @@ def delete_master(db, master_id):
 
 def get_master_by_id(db, master_id):
     return db.query(Master).filter(Master.id == master_id).first()
+
+
+def delete_service(db, service_id):
+    service = db.query(Service).filter(Service.id == service_id).first()
+    if not service:
+        return False
+    service.is_active = False
+    db.commit()
+    return True
+
+
+def get_service_by_id(db, service_id):
+    return db.query(Service).filter(Service.id == service_id).first()
+
+
+def create_service(db, name, price, description=None, duration=60):
+    service = Service(name=name, price=price, description=description, duration_minutes=duration, is_active=True)
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+    return service
