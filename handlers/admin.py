@@ -6,7 +6,7 @@ import logging
 
 from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, delete_master, get_master_by_id, get_services, delete_service, get_service_by_id, create_service, get_booking_by_id, update_booking_service, delete_booking, reschedule_booking
 from keyboards import get_admin_menu, get_admin_bookings_keyboard, get_admin_booking_actions, get_back_main, get_masters_management_keyboard, get_services_management_keyboard
-from states import AdminAddMasterState, AdminWorkingHoursState, AdminAddServiceState
+from states import AdminAddMasterState, AdminWorkingHoursState, AdminAddServiceState, AdminRescheduleState
 from config import ADMIN_IDS
 from config import ADMIN_IDS, ADMIN_USERNAMES
 import config
@@ -487,13 +487,18 @@ async def admin_edit_time_start(callback: CallbackQuery, state: FSMContext):
         return
     
     master_id = booking.master_id
+    current_date = booking.date.strftime('%d.%m.%Y')
+    current_time = booking.time.strftime('%H:%M')
     db.close()
     
-    await state.update_data(booking_id=booking_id)
+    # Сохраняем в state
+    await state.update_data(booking_id=booking_id, master_id=master_id)
+    await state.set_state(AdminRescheduleState.new_date)
     
     from keyboards.calendar import get_calendar_keyboard
     await callback.message.edit_text(
-        f"📅 Выберите новую дату для записи #{booking_id}:",
+        f"📅 Текущее время: {current_date} {current_time}\n\n"
+        f"Выберите новую дату для записи #{booking_id}:",
         reply_markup=get_calendar_keyboard(master_id)
     )
     await callback.answer()
@@ -612,7 +617,7 @@ async def admin_delete_booking(callback: CallbackQuery):
 
 
 # Обработчик выбора даты при переносе админом
-@router.callback_query(F.data.startswith("calendar_"))
+@router.callback_query(F.data.startswith("calendar_"), AdminRescheduleState.new_date)
 async def admin_reschedule_date(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id, callback.from_user.username):
         await callback.answer("⛔ Доступ запрещён")
@@ -625,23 +630,19 @@ async def admin_reschedule_date(callback: CallbackQuery, state: FSMContext):
     date_str = parts[2]
     selected_date = date.fromisoformat(date_str)
     
+    await state.update_data(new_date=date_str, new_selected_date=selected_date)
+    await state.set_state(AdminRescheduleState.new_time)
+    
     data = await state.get_data()
+    master_id = data.get("master_id")
     booking_id = data.get("booking_id")
     
-    if not booking_id:
-        await callback.answer("Ошибка: ID записи не найден")
+    if not master_id or not booking_id:
+        await callback.answer("Ошибка: данные не найдены")
         return
-    
-    db = next(get_db())
-    booking = get_booking_by_id(db, booking_id)
-    if not booking:
-        await callback.answer("Запись не найдена")
-        db.close()
-        return
-    
-    master_id = booking.master_id
     
     # Получаем свободные слоты
+    db = next(get_db())
     from database import get_available_slots
     slots = get_available_slots(db, master_id, selected_date)
     db.close()
@@ -662,7 +663,7 @@ async def admin_reschedule_date(callback: CallbackQuery, state: FSMContext):
 
 
 # Обработчик выбора времени при переносе
-@router.callback_query(F.data.startswith("time_"))
+@router.callback_query(F.data.startswith("time_"), AdminRescheduleState.new_time)
 async def admin_reschedule_time(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id, callback.from_user.username):
         await callback.answer("⛔ Доступ запрещён")

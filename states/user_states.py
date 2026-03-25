@@ -13,10 +13,19 @@ class BookingState(StatesGroup):
 
 
 class RescheduleState(StatesGroup):
+    """FSM для клиента - изменение времени записи"""
     booking_id = State()
+    master_id = State()
     new_date = State()
     new_time = State()
-    confirm = State()
+
+
+class AdminRescheduleState(StatesGroup):
+    """FSM для админа - изменение времени записи"""
+    booking_id = State()
+    master_id = State()
+    new_date = State()
+    new_time = State()
 
 
 class AdminAddMasterState(StatesGroup):

@@ -6,7 +6,7 @@ import logging
 
 from database import get_db, get_services, get_masters, get_available_slots, create_booking, get_user_bookings, cancel_booking, get_booking_by_id, reschedule_booking
 from keyboards import get_main_menu, get_services_keyboard, get_masters_keyboard, get_time_slots_keyboard, get_calendar_keyboard, get_my_bookings_keyboard, get_booking_detail_keyboard, get_back_main, get_back_to_bookings, get_contacts_keyboard, get_help_keyboard
-from states import BookingState, RescheduleState
+from states import BookingState, RescheduleState, AdminRescheduleState
 from config import ADMIN_IDS
 import config
 
