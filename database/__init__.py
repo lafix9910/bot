@@ -4,7 +4,7 @@ from database.db import (
     get_services, get_masters, get_available_slots, create_booking,
     cancel_booking, confirm_booking, reschedule_booking, get_user_bookings,
     get_all_bookings, add_default_data, delete_master, get_master_by_id,
-    delete_service, get_service_by_id, create_service
+    delete_service, get_service_by_id, create_service, get_booking_by_id
 )
 
 __all__ = [
@@ -13,5 +13,5 @@ __all__ = [
     "get_services", "get_masters", "get_available_slots", "create_booking",
     "cancel_booking", "confirm_booking", "reschedule_booking", "get_user_bookings",
     "get_all_bookings", "add_default_data", "delete_master", "get_master_by_id",
-    "delete_service", "get_service_by_id", "create_service"
+    "delete_service", "get_service_by_id", "create_service", "get_booking_by_id"
 ]

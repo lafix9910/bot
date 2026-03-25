@@ -6,6 +6,9 @@ class BookingState(StatesGroup):
     master = State()
     date = State()
     time = State()
+    name = State()
+    phone = State()
+    comment = State()
     confirm = State()
 
 

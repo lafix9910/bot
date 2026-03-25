@@ -155,33 +155,95 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
     selected_time = datetime.strptime(time_str, "%H:%M").time()
     selected_date = date.fromisoformat(date_str)
     
-    await state.update_data(time=time_str, selected_time=selected_time, selected_date=selected_date)
+    await state.update_data(
+        time=time_str, 
+        selected_time=selected_time, 
+        selected_date=selected_date,
+        master_id=master_id
+    )
     
+    logger.info(f"User selected time: {date_str} {time_str}, master_id: {master_id}")
+    
+    # Переходим к вводу имени
+    await callback.message.edit_text(
+        "📝 Введите ваше имя:",
+        reply_markup=get_back_main()
+    )
+    await state.set_state(BookingState.name)
+    await callback.answer()
+
+
+@router.message(BookingState.name)
+async def input_name(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if len(name) < 2:
+        await message.answer("Введите имя (минимум 2 символа):")
+        return
+    
+    await state.update_data(name=name)
+    logger.info(f"User entered name: {name}")
+    
+    await message.answer("📱 Введите ваш номер телефона:")
+    await state.set_state(BookingState.phone)
+
+
+@router.message(BookingState.phone)
+async def input_phone(message: Message, state: FSMContext):
+    phone = message.text.strip()
+    if len(phone) < 5:
+        await message.answer("Введите корректный номер телефона:")
+        return
+    
+    await state.update_data(phone=phone)
+    logger.info(f"User entered phone: {phone}")
+    
+    await message.answer(
+        "💬 Введите комментарий (или /skip чтобы пропустить):\n"
+        "Например: хочу французский маникюр"
+    )
+    await state.set_state(BookingState.comment)
+
+
+@router.message(BookingState.comment)
+async def input_comment(message: Message, state: FSMContext):
+    if message.text and message.text.strip() != "/skip":
+        comment = message.text.strip()
+    else:
+        comment = None
+    
+    await state.update_data(comment=comment)
+    logger.info(f"User entered comment: {comment}")
+    
+    # Показываем подтверждение
     data = await state.get_data()
-    logger.info(f"User selected time: {date_str} {time_str}")
     
     db = next(get_db())
     services = get_services(db)
     service = next((s for s in services if s.id == data["service_id"]), None)
     masters = get_masters(db)
-    master = next((m for m in masters if m.id == master_id), None)
+    master = next((m for m in masters if m.id == data["master_id"]), None)
     db.close()
     
     confirmation_text = (
         f"📋 Подтверждение записи:\n\n"
+        f"👤 Имя: {data['name']}\n"
+        f"📱 Телефон: {data['phone']}\n"
         f"✨ Услуга: {service.name}\n"
         f"💰 Цена: {service.price} ₽\n"
         f"👤 Мастер: {master.name}\n"
-        f"📅 Дата: {date_str}\n"
-        f"🕐 Время: {time_str}\n\n"
-        f"Подтвердить запись?"
+        f"📅 Дата: {data['date']}\n"
+        f"🕐 Время: {data['time']}\n"
     )
     
-    from keyboards.main import get_booking_confirmation
-    keyboard = get_booking_confirmation(date_str, time_str, master_id)
+    if data.get('comment'):
+        confirmation_text += f"💬 Комментарий: {data['comment']}\n"
     
-    await callback.message.edit_text(confirmation_text, reply_markup=keyboard)
-    await callback.answer()
+    confirmation_text += "\n✅ Подтвердить запись?"
+    
+    from keyboards.main import get_booking_confirmation
+    keyboard = get_booking_confirmation(data['date'], data['time'], data['master_id'])
+    
+    await message.answer(confirmation_text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data.startswith("confirm_"))
@@ -200,44 +262,69 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
     logger.info(f"User {user.id} confirming booking: {date_str} {time_str}")
     
     db = next(get_db())
-    booking, error = create_booking(
-        db=db,
-        user_id=user.id,
-        username=user.username,
-        full_name=user.full_name or user.first_name,
-        service_id=data["service_id"],
-        master_id=master_id,
-        date_val=selected_date,
-        time_val=selected_time
-    )
-    db.close()
-    
-    if error:
-        await callback.message.edit_text(f"❌ {error}", reply_markup=get_main_menu())
-    else:
+    try:
+        booking, error = create_booking(
+            db=db,
+            user_id=user.id,
+            username=user.username,
+            name=data.get("name", user.first_name or "Без имени"),
+            phone=data.get("phone", "Не указан"),
+            service_id=data["service_id"],
+            master_id=master_id,
+            date_val=selected_date,
+            time_val=selected_time,
+            comment=data.get("comment")
+        )
+        
+        if error:
+            await callback.message.edit_text(f"❌ {error}", reply_markup=get_main_menu())
+            await state.clear()
+            await callback.answer()
+            return
+        
+        # Сообщение пользователю
         await callback.message.edit_text(
-            f"✅ Запись оформлена!\n\n"
-            f"✨ Услуга: {data['service_name']}\n"
-            f"👤 Мастер: {data['master_name']}\n"
+            f"✅ Заявка отправлена!\n\n"
             f"📅 Дата: {date_str}\n"
-            f"🕐 Время: {time_str}\n\n"
-            f"Мы свяжемся с вами для подтверждения.",
+            f"🕐 Время: {time_str}\n"
+            f"💅 Услуга: {data['service_name']}\n\n"
+            f"Мастер свяжется с вами в ближайшее время.",
             reply_markup=get_main_menu()
         )
+        
+        # Уведомление админу с красивым сообщением и кнопками
+        from keyboards.main import get_admin_booking_actions
+        admin_text = (
+            f"🔥 Новая заявка\n\n"
+            f"Имя: {data.get('name', 'Без имени')}\n"
+            f"Телефон: {data.get('phone', 'Не указан')}\n"
+            f"Username: @{user.username or 'Нет'}\n"
+            f"Услуга: {data['service_name']}\n"
+            f"Мастер: {data['master_name']}\n"
+            f"Дата: {date_str}\n"
+            f"Время: {time_str}\n"
+        )
+        
+        if data.get('comment'):
+            admin_text += f"Комментарий: {data['comment']}\n"
+        
+        admin_text += f"\nID заявки: {booking.id}"
         
         for admin_id in config.ADMIN_IDS:
             try:
                 await callback.bot.send_message(
                     admin_id,
-                    f"🔔 Новая запись!\n\n"
-                    f"👤 Клиент: @{user.username or user.first_name}\n"
-                    f"✨ Услуга: {data['service_name']}\n"
-                    f"👤 Мастер: {data['master_name']}\n"
-                    f"📅 Дата: {date_str}\n"
-                    f"🕐 Время: {time_str}"
+                    admin_text,
+                    reply_markup=get_admin_booking_actions(booking.id)
                 )
             except Exception as e:
                 logger.error(f"Failed to notify admin {admin_id}: {e}")
+                
+    except Exception as e:
+        logger.error(f"Error creating booking: {e}")
+        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=get_main_menu())
+    finally:
+        db.close()
     
     await state.clear()
     await callback.answer()

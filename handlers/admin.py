@@ -3,9 +3,10 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 import logging
 
-from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, delete_master, get_master_by_id, get_services, delete_service, get_service_by_id, create_service
+from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, delete_master, get_master_by_id, get_services, delete_service, get_service_by_id, create_service, get_booking_by_id
 from keyboards import get_admin_menu, get_admin_bookings_keyboard, get_admin_booking_actions, get_back_main, get_masters_management_keyboard, get_services_management_keyboard
 from states import AdminAddMasterState, AdminWorkingHoursState, AdminAddServiceState
+from config import ADMIN_IDS
 from config import ADMIN_IDS, ADMIN_USERNAMES
 import config
 
@@ -124,11 +125,24 @@ async def admin_confirm(callback: CallbackQuery):
     logger.info(f"Admin confirming booking {booking_id}")
     
     db = next(get_db())
-    success = confirm_booking(db, booking_id)
+    success, user_data = confirm_booking(db, booking_id)
+    
+    if success and user_data:
+        # Отправляем уведомление пользователю
+        try:
+            await callback.bot.send_message(
+                user_data["user_id"],
+                "✅ Ваша запись подтверждена!\n\n"
+                "Мы ждём вас в назначенное время.\n"
+                "До встречи!"
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify user: {e}")
+    
     db.close()
     
     if success:
-        await callback.message.edit_text("✅ Запись подтверждена!", reply_markup=get_admin_menu())
+        await callback.message.edit_text("✅ Запись подтверждена! Клиент уведомлён.", reply_markup=get_admin_menu())
     else:
         await callback.message.edit_text("❌ Не удалось подтвердить запись", reply_markup=get_admin_menu())
     
@@ -145,11 +159,23 @@ async def admin_cancel(callback: CallbackQuery):
     logger.info(f"Admin cancelling booking {booking_id}")
     
     db = next(get_db())
-    success = cancel_booking(db, booking_id)
+    success, user_data = cancel_booking(db, booking_id)
+    
+    if success and user_data:
+        # Отправляем уведомление пользователю
+        try:
+            await callback.bot.send_message(
+                user_data["user_id"],
+                "К сожалению, ваша запись отменена.\n\n"
+                "Это время занято. Свяжитесь с нами для подбора другого времени."
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify user: {e}")
+    
     db.close()
     
     if success:
-        await callback.message.edit_text("❌ Запись отменена!", reply_markup=get_admin_menu())
+        await callback.message.edit_text("❌ Запись отменена! Клиент уведомлён.", reply_markup=get_admin_menu())
     else:
         await callback.message.edit_text("❌ Не удалось отменить запись", reply_markup=get_admin_menu())
     

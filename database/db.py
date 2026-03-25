@@ -73,28 +73,41 @@ def get_available_slots(db, master_id, selected_date: date):
     return all_slots
 
 
-def create_booking(db, user_id, username, full_name, service_id, master_id, date_val, time_val, phone=None):
-    """Создать новую запись"""
-    logger.info(f"Creating booking: user_id={user_id}, username={username}, service_id={service_id}, master_id={master_id}, date={date_val}, time={time_val}")
+def create_booking(db, user_id, username, name, phone, service_id, master_id, date_val, time_val, comment=None):
+    """Создать новую запись с полными данными клиента"""
+    logger.info(f"Creating booking: user_id={user_id}, name={name}, phone={phone}, service_id={service_id}, master_id={master_id}, date={date_val}, time={time_val}")
     
-    # Проверяем, нет ли уже записи на это время
+    # Проверяем, нет ли уже записи на это время у этого мастера
     existing_booking = db.query(Booking).filter(
-        Booking.user_id == int(user_id),
+        Booking.master_id == master_id,
         Booking.date == date_val,
         Booking.time == time_val,
         Booking.status.in_(["pending", "confirmed"])
     ).first()
     
     if existing_booking:
-        logger.warning(f"Booking already exists for user {user_id} at {date_val} {time_val}")
+        logger.warning(f"Booking already exists for master {master_id} at {date_val} {time_val}")
+        return None, "Это время уже занято. Пожалуйста, выберите другое."
+    
+    # Проверяем, есть ли уже запись у этого пользователя на это время
+    user_booking = db.query(Booking).filter(
+        Booking.user_id == int(user_id),
+        Booking.date == date_val,
+        Booking.time == time_val,
+        Booking.status.in_(["pending", "confirmed"])
+    ).first()
+    
+    if user_booking:
+        logger.warning(f"User {user_id} already has booking at {date_val} {time_val}")
         return None, "У вас уже есть запись на это время"
     
     # Создаём новую запись
     booking = Booking(
         user_id=int(user_id),
         username=username,
-        full_name=full_name,
+        name=name,
         phone=phone,
+        comment=comment,
         service_id=service_id,
         master_id=master_id,
         date=date_val,
@@ -128,7 +141,10 @@ def create_booking(db, user_id, username, full_name, service_id, master_id, date
 def cancel_booking(db, booking_id):
     booking = db.query(Booking).filter(Booking.id == booking_id).first()
     if not booking:
-        return False
+        return False, None
+    
+    user_id = booking.user_id
+    name = booking.name
     
     time_slot = db.query(TimeSlot).filter(
         TimeSlot.master_id == booking.master_id,
@@ -142,17 +158,26 @@ def cancel_booking(db, booking_id):
     
     booking.status = "cancelled"
     db.commit()
-    return True
+    logger.info(f"Booking {booking_id} cancelled")
+    return True, {"user_id": user_id, "name": name}
 
 
 def confirm_booking(db, booking_id):
     booking = db.query(Booking).filter(Booking.id == booking_id).first()
     if not booking:
-        return False
+        return False, None
+    
+    user_id = booking.user_id
+    name = booking.name
     
     booking.status = "confirmed"
     db.commit()
-    return True
+    logger.info(f"Booking {booking_id} confirmed")
+    return True, {"user_id": user_id, "name": name}
+
+
+def get_booking_by_id(db, booking_id):
+    return db.query(Booking).filter(Booking.id == booking_id).first()
 
 
 def reschedule_booking(db, booking_id, new_date, new_time):
