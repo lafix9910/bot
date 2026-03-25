@@ -110,6 +110,7 @@ async def select_master(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.update_data(master_id=master_id, master_name=master.name)
+    await state.set_state(BookingState.date)
     logger.info(f"User selected master: {master.name}")
     
     await callback.message.edit_text(
@@ -127,6 +128,7 @@ async def select_date(callback: CallbackQuery, state: FSMContext):
     selected_date = date.fromisoformat(date_str)
     
     await state.update_data(date=date_str, selected_date=selected_date)
+    await state.set_state(BookingState.time)
     
     db = next(get_db())
     slots = get_available_slots(db, master_id, selected_date)
