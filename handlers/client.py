@@ -143,88 +143,131 @@ async def select_date(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("time_"))
 async def select_time(callback: CallbackQuery, state: FSMContext):
-    parts = callback.data.split("_")
-    date_str = parts[1]
-    time_str = parts[2]
-    master_id = int(parts[3])
-    
-    selected_time = datetime.strptime(time_str, "%H:%M").time()
-    selected_date = date.fromisoformat(date_str)
-    
-    await state.update_data(time=time_str, selected_time=selected_time, selected_date=selected_date)
-    
-    data = await state.get_data()
-    
-    db = next(get_db())
-    services = get_services(db)
-    service = next((s for s in services if s.id == data["service_id"]), None)
-    masters = get_masters(db)
-    master = next((m for m in masters if m.id == master_id), None)
-    db.close()
-    
-    confirmation_text = (
-        f"📋 Подтверждение записи:\n\n"
-        f"✨ Услуга: {service.name}\n"
-        f"💰 Цена: {service.price} ₽\n"
-        f"👤 Мастер: {master.name}\n"
-        f"📅 Дата: {date_str}\n"
-        f"🕐 Время: {time_str}\n\n"
-        f"Подтвердить запись?"
-    )
-    
-    keyboard = get_booking_confirmation(service, master, date_str, time_str)
-    
-    await callback.message.edit_text(confirmation_text, reply_markup=keyboard)
-    await callback.answer()
+    try:
+        parts = callback.data.split("_")
+        date_str = parts[1]
+        time_str = parts[2]
+        master_id = int(parts[3])
+        
+        selected_time = datetime.strptime(time_str, "%H:%M").time()
+        selected_date = date.fromisoformat(date_str)
+        
+        await state.update_data(time=time_str, selected_time=selected_time, selected_date=selected_date, master_id=master_id)
+        
+        data = await state.get_data()
+        
+        if "service_id" not in data:
+            await callback.message.edit_text(
+                "❌ Ошибка: данные записи потеряны. Начните заново.",
+                reply_markup=get_main_menu()
+            )
+            await callback.answer()
+            return
+        
+        db = next(get_db())
+        services = get_services(db)
+        service = next((s for s in services if s.id == data["service_id"]), None)
+        masters = get_masters(db)
+        master = next((m for m in masters if m.id == data.get("master_id", master_id)), None)
+        db.close()
+        
+        if not service or not master:
+            await callback.message.edit_text(
+                "❌ Ошибка: услуга или мастер не найдены.",
+                reply_markup=get_main_menu()
+            )
+            await callback.answer()
+            return
+        
+        confirmation_text = (
+            f"📋 Подтверждение записи:\n\n"
+            f"✨ Услуга: {service.name}\n"
+            f"💰 Цена: {service.price} ₽\n"
+            f"👤 Мастер: {master.name}\n"
+            f"📅 Дата: {date_str}\n"
+            f"🕐 Время: {time_str}\n\n"
+            f"Подтвердить запись?"
+        )
+        
+        keyboard = get_booking_confirmation(service, master, date_str, time_str)
+        
+        await callback.message.edit_text(confirmation_text, reply_markup=keyboard)
+        await callback.answer()
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Произошла ошибка: {str(e)}\nПопробуйте начать заново /start",
+            reply_markup=get_main_menu()
+        )
+        await callback.answer()
 
 
 @router.callback_query(F.data == "confirm_booking")
 async def confirm_booking(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    user = callback.from_user
-    
-    db = next(get_db())
-    booking, error = create_booking(
-        db=db,
-        user_id=user.id,
-        username=user.username,
-        full_name=user.full_name or user.first_name,
-        service_id=data["service_id"],
-        master_id=data["master_id"],
-        date_val=data["selected_date"],
-        time_val=data["selected_time"]
-    )
-    db.close()
-    
-    if error:
-        await callback.message.edit_text(f"❌ {error}", reply_markup=get_main_menu())
-    else:
+    try:
+        data = await state.get_data()
+        
+        required_fields = ["service_id", "master_id", "selected_date", "selected_time", "service_name", "master_name", "date", "time"]
+        missing = [f for f in required_fields if f not in data]
+        if missing:
+            await callback.message.edit_text(
+                f"❌ Ошибка: отсутствуют данные {missing}. Начните заново /start",
+                reply_markup=get_main_menu()
+            )
+            await callback.answer()
+            await state.clear()
+            return
+        
+        user = callback.from_user
+        
+        db = next(get_db())
+        booking, error = create_booking(
+            db=db,
+            user_id=user.id,
+            username=user.username,
+            full_name=user.full_name or user.first_name,
+            service_id=data["service_id"],
+            master_id=data["master_id"],
+            date_val=data["selected_date"],
+            time_val=data["selected_time"]
+        )
+        db.close()
+        
+        if error:
+            await callback.message.edit_text(f"❌ {error}", reply_markup=get_main_menu())
+        else:
+            await callback.message.edit_text(
+                f"✅ Запись оформлена!\n\n"
+                f"✨ Услуга: {data['service_name']}\n"
+                f"👤 Мастер: {data['master_name']}\n"
+                f"📅 Дата: {data['date']}\n"
+                f"🕐 Время: {data['time']}\n\n"
+                f"Мы свяжемся с вами для подтверждения.",
+                reply_markup=get_main_menu()
+            )
+            
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    await callback.bot.send_message(
+                        admin_id,
+                        f"🔔 Новая запись!\n\n"
+                        f"👤 Клиент: @{user.username or user.first_name}\n"
+                        f"✨ Услуга: {data['service_name']}\n"
+                        f"👤 Мастер: {data['master_name']}\n"
+                        f"📅 Дата: {data['date']}\n"
+                        f"🕐 Время: {data['time']}"
+                    )
+                except:
+                    pass
+        
+        await state.clear()
+        await callback.answer()
+    except Exception as e:
         await callback.message.edit_text(
-            f"✅ Запись оформлена!\n\n"
-            f"✨ Услуга: {data['service_name']}\n"
-            f"👤 Мастер: {data['master_name']}\n"
-            f"📅 Дата: {data['date']}\n"
-            f"🕐 Время: {data['time']}\n\n"
-            f"Мы свяжемся с вами для подтверждения.",
+            f"❌ Ошибка при записи: {str(e)}\nПопробуйте начать заново /start",
             reply_markup=get_main_menu()
         )
-        
-        for admin_id in config.ADMIN_IDS:
-            try:
-                await callback.bot.send_message(
-                    admin_id,
-                    f"🔔 Новая запись!\n\n"
-                    f"👤 Клиент: @{user.username or user.first_name}\n"
-                    f"✨ Услуга: {data['service_name']}\n"
-                    f"👤 Мастер: {data['master_name']}\n"
-                    f"📅 Дата: {data['date']}\n"
-                    f"🕐 Время: {data['time']}"
-                )
-            except:
-                pass
-    
-    await state.clear()
-    await callback.answer()
+        await state.clear()
+        await callback.answer()
 
 
 @router.callback_query(F.data == "cancel_booking")
