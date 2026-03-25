@@ -51,20 +51,31 @@ async def admin_bookings(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён")
         return
     
-    db = next(get_db())
-    bookings = get_all_bookings(db)
-    db.close()
+    logger.info("Admin requesting all bookings")
     
-    if not bookings:
+    db = next(get_db())
+    try:
+        bookings = get_all_bookings(db)
+        logger.info(f"Found {len(bookings)} total bookings")
+        
+        if not bookings:
+            await callback.message.edit_text(
+                "📭 Записей пока нет.",
+                reply_markup=get_back_main()
+            )
+        else:
+            await callback.message.edit_text(
+                f"📋 Все записи ({len(bookings)}):",
+                reply_markup=get_admin_bookings_keyboard(bookings)
+            )
+    except Exception as e:
+        logger.error(f"Error getting all bookings: {e}")
         await callback.message.edit_text(
-            "📭 Записей пока нет.",
+            f"❌ Ошибка: {e}",
             reply_markup=get_back_main()
         )
-    else:
-        await callback.message.edit_text(
-            "📋 Все записи:",
-            reply_markup=get_admin_bookings_keyboard(bookings)
-        )
+    finally:
+        db.close()
     
     await callback.answer()
 

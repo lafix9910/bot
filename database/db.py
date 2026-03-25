@@ -4,6 +4,9 @@ from database.models import Base, Service, Master, Booking, MasterSchedule, Time
 from datetime import date, time, datetime, timedelta
 from config import DATABASE_URL, WORKING_HOURS_START, WORKING_HOURS_END, SLOT_DURATION_MINUTES, DAYS_IN_ADVANCE
 import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -71,18 +74,24 @@ def get_available_slots(db, master_id, selected_date: date):
 
 
 def create_booking(db, user_id, username, full_name, service_id, master_id, date_val, time_val, phone=None):
+    """Создать новую запись"""
+    logger.info(f"Creating booking: user_id={user_id}, username={username}, service_id={service_id}, master_id={master_id}, date={date_val}, time={time_val}")
+    
+    # Проверяем, нет ли уже записи на это время
     existing_booking = db.query(Booking).filter(
-        Booking.user_id == user_id,
+        Booking.user_id == int(user_id),
         Booking.date == date_val,
         Booking.time == time_val,
         Booking.status.in_(["pending", "confirmed"])
     ).first()
     
     if existing_booking:
+        logger.warning(f"Booking already exists for user {user_id} at {date_val} {time_val}")
         return None, "У вас уже есть запись на это время"
     
+    # Создаём новую запись
     booking = Booking(
-        user_id=user_id,
+        user_id=int(user_id),
         username=username,
         full_name=full_name,
         phone=phone,
@@ -96,6 +105,9 @@ def create_booking(db, user_id, username, full_name, service_id, master_id, date
     db.commit()
     db.refresh(booking)
     
+    logger.info(f"Booking created with id={booking.id}")
+    
+    # Блокируем слот
     time_slot = db.query(TimeSlot).filter(
         TimeSlot.master_id == master_id,
         TimeSlot.date == date_val,
@@ -191,17 +203,29 @@ def reschedule_booking(db, booking_id, new_date, new_time):
 
 
 def get_user_bookings(db, user_id):
-    return db.query(Booking).filter(
-        Booking.user_id == user_id,
+    """Получить записи пользователя по user_id (telegram id)"""
+    logger.info(f"Getting user bookings for user_id={user_id}, type={type(user_id)}")
+    
+    bookings = db.query(Booking).filter(
+        Booking.user_id == int(user_id),
         Booking.status.in_(["pending", "confirmed"])
     ).order_by(Booking.date, Booking.time).all()
+    
+    logger.info(f"Found {len(bookings)} bookings for user {user_id}")
+    return bookings
 
 
 def get_all_bookings(db, status=None):
+    """Получить все записи (для админа)"""
+    logger.info(f"Getting all bookings, status filter: {status}")
+    
     query = db.query(Booking)
     if status:
         query = query.filter(Booking.status == status)
-    return query.order_by(Booking.date, Booking.time).all()
+    
+    bookings = query.order_by(Booking.date, Booking.time).all()
+    logger.info(f"Found {len(bookings)} total bookings")
+    return bookings
 
 
 def add_default_data(db):

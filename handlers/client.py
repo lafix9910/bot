@@ -256,25 +256,38 @@ async def cancel_booking_handler(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "my_bookings")
 async def my_bookings(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    db = next(get_db())
-    bookings = get_user_bookings(db, callback.from_user.id)
-    db.close()
+    user_id = callback.from_user.id
     
-    if not bookings:
+    logger.info(f"User {user_id} requesting their bookings")
+    
+    db = next(get_db())
+    try:
+        bookings = get_user_bookings(db, user_id)
+        logger.info(f"Found {len(bookings)} bookings for user {user_id}")
+        
+        if not bookings:
+            await callback.message.edit_text(
+                "📭 У вас пока нет записей.",
+                reply_markup=get_back_main()
+            )
+        else:
+            text = "📋 Ваши записи:\n\n"
+            for b in bookings:
+                status = "⏳ Ожидает" if b.status == "pending" else "✅ Подтверждена"
+                text += f"{status}\n"
+                text += f"✨ {b.service.name}\n"
+                text += f"👤 {b.master.name}\n"
+                text += f"📅 {b.date.strftime('%d.%m.%Y')} {b.time.strftime('%H:%M')}\n\n"
+            
+            await callback.message.edit_text(text, reply_markup=get_my_bookings_keyboard(bookings))
+    except Exception as e:
+        logger.error(f"Error getting user bookings: {e}")
         await callback.message.edit_text(
-            "📭 У вас пока нет записей.",
+            f"❌ Ошибка: {e}",
             reply_markup=get_back_main()
         )
-    else:
-        text = "📋 Ваши записи:\n\n"
-        for b in bookings:
-            status = "⏳ Ожидает" if b.status == "pending" else "✅ Подтверждена"
-            text += f"{status}\n"
-            text += f"✨ {b.service.name}\n"
-            text += f"👤 {b.master.name}\n"
-            text += f"📅 {b.date.strftime('%d.%m.%Y')} {b.time.strftime('%H:%M')}\n\n"
-        
-        await callback.message.edit_text(text, reply_markup=get_my_bookings_keyboard(bookings))
+    finally:
+        db.close()
     
     await callback.answer()
 
