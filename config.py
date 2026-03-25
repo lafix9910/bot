@@ -21,3 +21,6 @@ WORKING_HOURS_START = int(os.getenv("WORKING_HOURS_START", "9"))
 WORKING_HOURS_END = int(os.getenv("WORKING_HOURS_END", "20"))
 SLOT_DURATION_MINUTES = int(os.getenv("SLOT_DURATION_MINUTES", "60"))
 DAYS_IN_ADVANCE = int(os.getenv("DAYS_IN_ADVANCE", "14"))
+
+ADMIN_PHONE = os.getenv("ADMIN_PHONE", "+7 (999) 000-00-00")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "username")
