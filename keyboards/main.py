@@ -1,5 +1,6 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+import config
 
 
 def get_main_menu():
@@ -66,7 +67,7 @@ def get_my_bookings_keyboard(bookings: list):
     return builder.as_markup()
 
 
-def get_booking_detail_keyboard(booking_id: int, is_admin: bool = False):
+def get_booking_detail_keyboard(booking_id: int, is_admin: bool = False, admin_id: int = None):
     """Кнопки для карточки записи. is_admin=True - для админа"""
     if is_admin:
         return InlineKeyboardMarkup(inline_keyboard=[
@@ -78,8 +79,18 @@ def get_booking_detail_keyboard(booking_id: int, is_admin: bool = False):
             [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_bookings")]
         ])
     else:
+        # Кнопка "Связаться с админом" - открывает чат с админом
+        if admin_id is None and config.ADMIN_IDS:
+            admin_id = config.ADMIN_IDS[0]
+        
+        if admin_id:
+            contact_url = f"tg://user?id={admin_id}"
+            contact_button = InlineKeyboardButton(text="📱 Связаться с админом", url=contact_url)
+        else:
+            contact_button = InlineKeyboardButton(text="📱 Связаться", callback_data=f"client_contact_{booking_id}")
+        
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📱 Связаться", callback_data=f"client_contact_{booking_id}")],
+            [contact_button],
             [InlineKeyboardButton(text="🔄 Изменить время", callback_data=f"reschedule_{booking_id}")],
             [InlineKeyboardButton(text="❌ Отменить запись", callback_data=f"cancel_{booking_id}")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="my_bookings")]

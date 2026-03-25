@@ -408,7 +408,7 @@ async def booking_detail(callback: CallbackQuery, state: FSMContext):
             from keyboards.main import get_booking_card_text
             text = get_booking_card_text(booking, show_full_info=True)
             
-            await callback.message.edit_text(text, reply_markup=get_booking_detail_keyboard(booking_id, is_admin=False))
+            await callback.message.edit_text(text, reply_markup=get_booking_detail_keyboard(booking_id, is_admin=False, admin_id=config.ADMIN_IDS[0] if config.ADMIN_IDS else None))
         finally:
             db.close()
             
