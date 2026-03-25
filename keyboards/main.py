@@ -1,6 +1,5 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from database.models import Service, Master
 
 
 def get_main_menu():
@@ -47,9 +46,9 @@ def get_time_slots_keyboard(slots: list, date_str: str, master_id: int):
     return builder.as_markup()
 
 
-def get_booking_confirmation(service: Service, master: Master, date_str: str, time_str: str):
+def get_booking_confirmation(date_str: str, time_str: str, master_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_booking")],
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_{date_str}_{time_str}_{master_id}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_booking")]
     ])
 
@@ -109,8 +108,8 @@ def get_contacts_keyboard():
 def get_admin_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Все записи", callback_data="admin_bookings")],
+        [InlineKeyboardButton(text="👥 Управление мастерами", callback_data="admin_manage_masters")],
         [InlineKeyboardButton(text="📅 Управление датами", callback_data="admin_dates")],
-        [InlineKeyboardButton(text="👥 Добавить мастера", callback_data="admin_add_master")],
         [InlineKeyboardButton(text="🔧 Настройки рабочих часов", callback_data="admin_hours")],
         [InlineKeyboardButton(text="◀️ Выход", callback_data="back_main")]
     ])
@@ -119,8 +118,10 @@ def get_admin_menu():
 def get_admin_bookings_keyboard(bookings: list):
     builder = InlineKeyboardBuilder()
     for booking in bookings:
+        status_icon = "⏳" if booking.status == "pending" else "✅" if booking.status == "confirmed" else "❌"
+        text = f"{status_icon} @{booking.username or booking.full_name or 'Unknown'} | {booking.date.strftime('%d.%m')} {booking.time.strftime('%H:%M')} | {booking.service.name}"
         builder.button(
-            text=f"@{booking.username or 'Unknown'} | {booking.date.strftime('%d.%m')} {booking.time.strftime('%H:%M')} | {booking.service.name}",
+            text=text,
             callback_data=f"admin_booking_{booking.id}"
         )
     builder.button(text="◀️ Админ-меню", callback_data="admin_menu")
@@ -132,6 +133,18 @@ def get_admin_booking_actions(booking_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_confirm_{booking_id}")],
         [InlineKeyboardButton(text="❌ Отменить", callback_data=f"admin_cancel_{booking_id}")],
-        [InlineKeyboardButton(text="🔄 Перенести", callback_data=f"admin_reschedule_{booking_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_bookings")]
     ])
+
+
+def get_masters_management_keyboard(masters: list):
+    builder = InlineKeyboardBuilder()
+    for master in masters:
+        builder.button(
+            text=f"❌ {master.name}",
+            callback_data=f"admin_delete_master_{master.id}"
+        )
+    builder.button(text="➕ Добавить мастера", callback_data="admin_add_master")
+    builder.button(text="◀️ Админ-меню", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()

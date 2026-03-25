@@ -226,3 +226,16 @@ def add_default_data(db):
         get_or_create_master(db, name, username, bio)
     
     db.commit()
+
+
+def delete_master(db, master_id):
+    master = db.query(Master).filter(Master.id == master_id).first()
+    if not master:
+        return False
+    master.is_active = False
+    db.commit()
+    return True
+
+
+def get_master_by_id(db, master_id):
+    return db.query(Master).filter(Master.id == master_id).first()

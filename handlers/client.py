@@ -2,14 +2,16 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from datetime import date, time, datetime
+import logging
 
-from database import get_db, get_services, get_masters, get_available_slots, create_booking, get_user_bookings, cancel_booking, reschedule_booking
+from database import get_db, get_services, get_masters, get_available_slots, create_booking, get_user_bookings, cancel_booking
 from keyboards import get_main_menu, get_services_keyboard, get_masters_keyboard, get_time_slots_keyboard, get_calendar_keyboard, get_my_bookings_keyboard, get_booking_detail_keyboard, get_back_main, get_back_to_bookings, get_contacts_keyboard, get_help_keyboard
-from states import BookingState, RescheduleState
+from states import BookingState
 from config import ADMIN_IDS
 import config
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 @router.message(F.text == "/start")
@@ -76,6 +78,7 @@ async def select_service(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.update_data(service_id=service_id, service_name=service.name, service_price=service.price)
+    logger.info(f"User selected service: {service.name}")
     
     db = next(get_db())
     masters = get_masters(db)
@@ -107,6 +110,7 @@ async def select_master(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.update_data(master_id=master_id, master_name=master.name)
+    logger.info(f"User selected master: {master.name}")
     
     await callback.message.edit_text(
         "📅 Выберите дату:",
@@ -154,6 +158,7 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
     await state.update_data(time=time_str, selected_time=selected_time, selected_date=selected_date)
     
     data = await state.get_data()
+    logger.info(f"User selected time: {date_str} {time_str}")
     
     db = next(get_db())
     services = get_services(db)
@@ -172,16 +177,27 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
         f"Подтвердить запись?"
     )
     
-    keyboard = __import__('keyboards.main', fromlist=['get_booking_confirmation']).get_booking_confirmation(service, master, date_str, time_str)
+    from keyboards.main import get_booking_confirmation
+    keyboard = get_booking_confirmation(date_str, time_str, master_id)
     
     await callback.message.edit_text(confirmation_text, reply_markup=keyboard)
     await callback.answer()
 
 
-@router.callback_query(F.data == "confirm_booking")
+@router.callback_query(F.data.startswith("confirm_"))
 async def confirm_booking(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    date_str = parts[1]
+    time_str = parts[2]
+    master_id = int(parts[3])
+    
+    selected_time = datetime.strptime(time_str, "%H:%M").time()
+    selected_date = date.fromisoformat(date_str)
+    
     data = await state.get_data()
     user = callback.from_user
+    
+    logger.info(f"User {user.id} confirming booking: {date_str} {time_str}")
     
     db = next(get_db())
     booking, error = create_booking(
@@ -190,9 +206,9 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
         username=user.username,
         full_name=user.full_name or user.first_name,
         service_id=data["service_id"],
-        master_id=data["master_id"],
-        date_val=data["selected_date"],
-        time_val=data["selected_time"]
+        master_id=master_id,
+        date_val=selected_date,
+        time_val=selected_time
     )
     db.close()
     
@@ -203,8 +219,8 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
             f"✅ Запись оформлена!\n\n"
             f"✨ Услуга: {data['service_name']}\n"
             f"👤 Мастер: {data['master_name']}\n"
-            f"📅 Дата: {data['date']}\n"
-            f"🕐 Время: {data['time']}\n\n"
+            f"📅 Дата: {date_str}\n"
+            f"🕐 Время: {time_str}\n\n"
             f"Мы свяжемся с вами для подтверждения.",
             reply_markup=get_main_menu()
         )
@@ -217,11 +233,11 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
                     f"👤 Клиент: @{user.username or user.first_name}\n"
                     f"✨ Услуга: {data['service_name']}\n"
                     f"👤 Мастер: {data['master_name']}\n"
-                    f"📅 Дата: {data['date']}\n"
-                    f"🕐 Время: {data['time']}"
+                    f"📅 Дата: {date_str}\n"
+                    f"🕐 Время: {time_str}"
                 )
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Failed to notify admin {admin_id}: {e}")
     
     await state.clear()
     await callback.answer()
@@ -294,6 +310,7 @@ async def booking_detail(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("cancel_"))
 async def cancel_user_booking(callback: CallbackQuery):
     booking_id = int(callback.data.split("_")[1])
+    logger.info(f"User cancelling booking {booking_id}")
     
     db = next(get_db())
     success = cancel_booking(db, booking_id)
@@ -315,7 +332,7 @@ async def reschedule_booking_start(callback: CallbackQuery, state: FSMContext):
     booking_id = int(callback.data.split("_")[1])
     
     await state.update_data(booking_id=booking_id)
-    await state.set_state(RescheduleState.new_date)
+    await state.set_state(BookingState.date)
     
     await callback.message.edit_text(
         "📅 Выберите новую дату:",

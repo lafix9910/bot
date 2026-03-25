@@ -1,14 +1,16 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
+import logging
 
-from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, get_services
-from keyboards import get_admin_menu, get_admin_bookings_keyboard, get_admin_booking_actions, get_back_main
+from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, delete_master, get_master_by_id
+from keyboards import get_admin_menu, get_admin_bookings_keyboard, get_admin_booking_actions, get_back_main, get_masters_management_keyboard
 from states import AdminAddMasterState, AdminWorkingHoursState
 from config import ADMIN_IDS, ADMIN_USERNAMES
 import config
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 def is_admin(user_id: int, username: str = None) -> bool:
@@ -17,6 +19,11 @@ def is_admin(user_id: int, username: str = None) -> bool:
     if username and username in ADMIN_USERNAMES:
         return True
     return False
+
+
+def check_admin(callback_or_message):
+    user = callback_or_message.from_user
+    return is_admin(user.id, user.username)
 
 
 @router.message(F.text == "/admin")
@@ -103,6 +110,7 @@ async def admin_confirm(callback: CallbackQuery):
         return
     
     booking_id = int(callback.data.split("_")[-1])
+    logger.info(f"Admin confirming booking {booking_id}")
     
     db = next(get_db())
     success = confirm_booking(db, booking_id)
@@ -111,7 +119,7 @@ async def admin_confirm(callback: CallbackQuery):
     if success:
         await callback.message.edit_text("✅ Запись подтверждена!", reply_markup=get_admin_menu())
     else:
-        await callback.answer("Не удалось подтвердить запись")
+        await callback.message.edit_text("❌ Не удалось подтвердить запись", reply_markup=get_admin_menu())
     
     await callback.answer()
 
@@ -123,6 +131,7 @@ async def admin_cancel(callback: CallbackQuery):
         return
     
     booking_id = int(callback.data.split("_")[-1])
+    logger.info(f"Admin cancelling booking {booking_id}")
     
     db = next(get_db())
     success = cancel_booking(db, booking_id)
@@ -131,7 +140,56 @@ async def admin_cancel(callback: CallbackQuery):
     if success:
         await callback.message.edit_text("❌ Запись отменена!", reply_markup=get_admin_menu())
     else:
-        await callback.answer("Не удалось отменить запись")
+        await callback.message.edit_text("❌ Не удалось отменить запись", reply_markup=get_admin_menu())
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_manage_masters")
+async def admin_manage_masters(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    db = next(get_db())
+    masters = get_masters(db)
+    db.close()
+    
+    if not masters:
+        await callback.message.edit_text(
+            "👥 Нет мастеров. Добавьте первого мастера:",
+            reply_markup=get_masters_management_keyboard([])
+        )
+    else:
+        await callback.message.edit_text(
+            "👥 Управление мастерами:",
+            reply_markup=get_masters_management_keyboard(masters)
+        )
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_delete_master_"))
+async def admin_delete_master(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    master_id = int(callback.data.split("_")[-1])
+    logger.info(f"Admin deleting master {master_id}")
+    
+    db = next(get_db())
+    master = get_master_by_id(db, master_id)
+    if master:
+        success = delete_master(db, master_id)
+        db.close()
+        if success:
+            await callback.message.edit_text(f"✅ Мастер '{master.name}' удалён!", reply_markup=get_admin_menu())
+        else:
+            await callback.message.edit_text("❌ Не удалось удалить мастера", reply_markup=get_admin_menu())
+    else:
+        db.close()
+        await callback.message.edit_text("❌ Мастер не найден", reply_markup=get_admin_menu())
     
     await callback.answer()
 
@@ -165,6 +223,7 @@ async def admin_add_master_username(message: Message, state: FSMContext):
 @router.message(AdminAddMasterState.bio)
 async def admin_add_master_bio(message: Message, state: FSMContext):
     data = await state.get_data()
+    logger.info(f"Adding master: {data['name']}, @{data['username']}")
     
     db = next(get_db())
     master = get_or_create_master(db, data["name"], data["username"], message.text)
@@ -225,37 +284,16 @@ async def admin_hours_end(message: Message, state: FSMContext):
         await message.answer("Введите число")
 
 
-@router.callback_query(F.data == "admin_services")
-async def admin_services(callback: CallbackQuery):
+@router.callback_query(F.data == "admin_dates")
+async def admin_dates(callback: CallbackQuery):
     if not is_admin(callback.from_user.id, callback.from_user.username):
         await callback.answer("⛔ Доступ запрещён")
         return
     
-    db = next(get_db())
-    services = get_services(db)
-    db.close()
-    
-    text = "✨ Услуги:\n\n"
-    for s in services:
-        text += f"• {s.name} — {s.price} ₽ ({s.duration_minutes} мин)\n"
-    
-    await callback.message.edit_text(text, reply_markup=get_admin_menu())
-    await callback.answer()
-
-
-@router.callback_query(F.data == "admin_masters")
-async def admin_masters(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id, callback.from_user.username):
-        await callback.answer("⛔ Доступ запрещён")
-        return
-    
-    db = next(get_db())
-    masters = get_masters(db)
-    db.close()
-    
-    text = "👥 Мастера:\n\n"
-    for m in masters:
-        text += f"• {m.name} (@{m.username or 'N/A'})\n"
-    
-    await callback.message.edit_text(text, reply_markup=get_admin_menu())
+    await callback.message.edit_text(
+        "📅 Управление датами\n\n"
+        "Даты автоматически генерируются на 14 дней вперёд.\n"
+        "Свободные слоты отображаются при записи клиента.",
+        reply_markup=get_admin_menu()
+    )
     await callback.answer()
