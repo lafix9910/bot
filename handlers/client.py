@@ -119,7 +119,7 @@ async def select_master(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("calendar_"))
+@router.callback_query(F.data.startswith("calendar_"), BookingState.date)
 async def select_date(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     master_id = int(parts[1])
@@ -145,7 +145,7 @@ async def select_date(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("time_"))
+@router.callback_query(F.data.startswith("time_"), BookingState.time)
 async def select_time(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     date_str = parts[1]
