@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from datetime import date, time, datetime
 
 from database import get_db, get_services, get_masters, get_available_slots, create_booking, get_user_bookings, cancel_booking, reschedule_booking
-from keyboards import get_main_menu, get_services_keyboard, get_masters_keyboard, get_time_slots_keyboard, get_calendar_keyboard, get_my_bookings_keyboard, get_booking_detail_keyboard, get_back_main, get_back_to_bookings, get_contacts_keyboard, get_help_keyboard
+from keyboards import get_main_menu, get_services_keyboard, get_masters_keyboard, get_time_slots_keyboard, get_calendar_keyboard, get_my_bookings_keyboard, get_booking_detail_keyboard, get_back_main, get_back_to_bookings, get_contacts_keyboard, get_help_keyboard, get_booking_confirmation
 from states import BookingState, RescheduleState
 from config import ADMIN_IDS
 import config
@@ -172,7 +172,7 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
         f"Подтвердить запись?"
     )
     
-    keyboard = __import__('keyboards.main', fromlist=['get_booking_confirmation']).get_booking_confirmation(service, master, date_str, time_str)
+    keyboard = get_booking_confirmation(service, master, date_str, time_str)
     
     await callback.message.edit_text(confirmation_text, reply_markup=keyboard)
     await callback.answer()
