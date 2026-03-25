@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from datetime import date, time, datetime
 import logging
 
-from database import get_db, get_services, get_masters, get_available_slots, create_booking, get_user_bookings, cancel_booking
+from database import get_db, get_services, get_masters, get_available_slots, create_booking, get_user_bookings, cancel_booking, get_booking_by_id, reschedule_booking
 from keyboards import get_main_menu, get_services_keyboard, get_masters_keyboard, get_time_slots_keyboard, get_calendar_keyboard, get_my_bookings_keyboard, get_booking_detail_keyboard, get_back_main, get_back_to_bookings, get_contacts_keyboard, get_help_keyboard
 from states import BookingState
 from config import ADMIN_IDS
@@ -391,19 +391,10 @@ async def booking_detail(callback: CallbackQuery):
         await callback.answer("Запись не найдена")
         return
     
-    status = "⏳ Ожидает подтверждения" if booking.status == "pending" else "✅ Подтверждена"
+    from keyboards.main import get_booking_card_text
+    text = get_booking_card_text(booking, show_full_info=True)
     
-    text = (
-        f"📋 Запись #{booking.id}\n\n"
-        f"Статус: {status}\n"
-        f"✨ Услуга: {booking.service.name}\n"
-        f"💰 Цена: {booking.service.price} ₽\n"
-        f"👤 Мастер: {booking.master.name}\n"
-        f"📅 Дата: {booking.date.strftime('%d.%m.%Y')}\n"
-        f"🕐 Время: {booking.time.strftime('%H:%M')}"
-    )
-    
-    await callback.message.edit_text(text, reply_markup=get_booking_detail_keyboard(booking_id))
+    await callback.message.edit_text(text, reply_markup=get_booking_detail_keyboard(booking_id, is_admin=False))
     await callback.answer()
 
 
@@ -413,12 +404,22 @@ async def cancel_user_booking(callback: CallbackQuery):
     logger.info(f"User cancelling booking {booking_id}")
     
     db = next(get_db())
-    success = cancel_booking(db, booking_id)
+    success, user_data = cancel_booking(db, booking_id)
     db.close()
     
     if success:
+        # Уведомляем админа
+        for admin_id in config.ADMIN_IDS:
+            try:
+                await callback.bot.send_message(
+                    admin_id,
+                    f"❌ Клиент отменил запись #{booking_id}"
+                )
+            except:
+                pass
+        
         await callback.message.edit_text(
-            "❌ Запись отменена.",
+            "❌ Запись отменена.\n\nМы будем рады видеть вас в другое время!",
             reply_markup=get_back_to_bookings()
         )
     else:
@@ -434,8 +435,44 @@ async def reschedule_booking_start(callback: CallbackQuery, state: FSMContext):
     await state.update_data(booking_id=booking_id)
     await state.set_state(BookingState.date)
     
+    # Получаем ID мастера для календаря
+    db = next(get_db())
+    booking = get_booking_by_id(db, booking_id)
+    if not booking:
+        await callback.answer("Запись не найдена")
+        db.close()
+        return
+    
+    master_id = booking.master_id
+    db.close()
+    
+    from keyboards.calendar import get_calendar_keyboard
     await callback.message.edit_text(
         "📅 Выберите новую дату:",
+        reply_markup=get_calendar_keyboard(master_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("client_contact_"))
+async def client_contact(callback: CallbackQuery):
+    booking_id = int(callback.data.split("_")[2])
+    
+    db = next(get_db())
+    booking = get_booking_by_id(db, booking_id)
+    db.close()
+    
+    if not booking:
+        await callback.answer("Запись не найдена")
+        return
+    
+    # Ссылка для связи с мастером
+    master_username = booking.master.username if booking.master else "username"
+    
+    await callback.message.edit_text(
+        f"📱 Для связи с мастером:\n\n"
+        f"Напишите @{master_username}\n"
+        f"или позвоните по телефону салона.",
         reply_markup=get_back_to_bookings()
     )
     await callback.answer()
@@ -467,4 +504,91 @@ async def contacts_handler(callback: CallbackQuery):
         "📍 Адрес: ул. Примерная, д. 1",
         reply_markup=get_contacts_keyboard()
     )
+    await callback.answer()
+
+
+# FSM для изменения времени записи
+@router.callback_query(F.data.startswith("reschedule_"), BookingState.date)
+async def reschedule_select_date(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    booking_id = int(parts[1])
+    date_str = parts[2]
+    selected_date = date.fromisoformat(date_str)
+    
+    await state.update_data(new_date=date_str, new_selected_date=selected_date)
+    
+    # Получаем мастера
+    db = next(get_db())
+    booking = get_booking_by_id(db, booking_id)
+    if not booking:
+        await callback.answer("Запись не найдена")
+        db.close()
+        return
+    
+    master_id = booking.master_id
+    db.close()
+    
+    # Показываем свободные слоты
+    db = next(get_db())
+    slots = get_available_slots(db, master_id, selected_date)
+    db.close()
+    
+    if not slots:
+        await callback.message.edit_text(
+            f"❌ Нет свободных слотов на {date_str}",
+            reply_markup=get_back_to_bookings()
+        )
+    else:
+        await callback.message.edit_text(
+            f"🕐 Выберите время:",
+            reply_markup=get_time_slots_keyboard(slots, date_str, master_id)
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("time_"))
+async def reschedule_select_time(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    date_str = parts[1]
+    time_str = parts[2]
+    master_id = int(parts[3])
+    
+    selected_time = datetime.strptime(time_str, "%H:%M").time()
+    selected_date = date.fromisoformat(date_str)
+    
+    data = await state.get_data()
+    booking_id = data.get("booking_id")
+    
+    logger.info(f"Rescheduling booking {booking_id} to {date_str} {time_str}")
+    
+    db = next(get_db())
+    success, error, user_data = reschedule_booking(db, booking_id, selected_date, selected_time)
+    
+    if success:
+        # Уведомляем админа
+        for admin_id in config.ADMIN_IDS:
+            try:
+                await callback.bot.send_message(
+                    admin_id,
+                    f"🔄 Клиент перенёс запись #{booking_id}\n"
+                    f"Новое время: {date_str} {time_str}"
+                )
+            except:
+                pass
+        
+        await callback.message.edit_text(
+            f"✅ Время изменено!\n\n"
+            f"📅 Дата: {date_str}\n"
+            f"🕐 Время: {time_str}\n\n"
+            f"Мы свяжемся с вами для подтверждения.",
+            reply_markup=get_back_to_bookings()
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ Ошибка: {error}",
+            reply_markup=get_back_to_bookings()
+        )
+    
+    db.close()
+    await state.clear()
     await callback.answer()

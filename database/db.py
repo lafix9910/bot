@@ -181,9 +181,10 @@ def get_booking_by_id(db, booking_id):
 
 
 def reschedule_booking(db, booking_id, new_date, new_time):
+    """Изменить время записи"""
     booking = db.query(Booking).filter(Booking.id == booking_id).first()
     if not booking:
-        return False, "Запись не найдена"
+        return False, "Запись не найдена", None
     
     existing = db.query(Booking).filter(
         Booking.master_id == booking.master_id,
@@ -194,7 +195,7 @@ def reschedule_booking(db, booking_id, new_date, new_time):
     ).first()
     
     if existing:
-        return False, "Это время уже занято"
+        return False, "Это время уже занято", None
     
     old_slot = db.query(TimeSlot).filter(
         TimeSlot.master_id == booking.master_id,
@@ -219,12 +220,60 @@ def reschedule_booking(db, booking_id, new_date, new_time):
     new_slot.is_booked = True
     new_slot.booking_id = booking.id
     
+    old_date = booking.date
+    old_time = booking.time
     booking.date = new_date
     booking.time = new_time
     booking.status = "pending"
     db.commit()
     
-    return True, None
+    logger.info(f"Booking {booking_id} rescheduled: {old_date} {old_time} -> {new_date} {new_time}")
+    
+    return True, None, {"user_id": booking.user_id, "name": booking.name, "old_date": old_date, "old_time": old_time}
+
+
+def update_booking_service(db, booking_id, new_service_id):
+    """Изменить услугу в записи (для админа)"""
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        return False, "Запись не найдена", None
+    
+    old_service = booking.service_id
+    booking.service_id = new_service_id
+    db.commit()
+    
+    logger.info(f"Booking {booking_id} service changed: {old_service} -> {new_service_id}")
+    
+    return True, None, {"user_id": booking.user_id, "name": booking.name}
+
+
+def delete_booking(db, booking_id):
+    """Удалить запись из базы"""
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        return False, "Запись не найдена"
+    
+    user_id = booking.user_id
+    name = booking.name
+    
+    # Освобождаем слот
+    time_slot = db.query(TimeSlot).filter(
+        TimeSlot.master_id == booking.master_id,
+        TimeSlot.date == booking.date,
+        TimeSlot.time == booking.time
+    ).first()
+    
+    if time_slot:
+        time_slot.is_booked = False
+        time_slot.booking_id = None
+    
+    # Удаляем запись
+    db.delete(booking)
+    db.commit()
+    
+    logger.info(f"Booking {booking_id} deleted")
+    
+    return True, {"user_id": user_id, "name": name}
 
 
 def get_user_bookings(db, user_id):

@@ -66,12 +66,65 @@ def get_my_bookings_keyboard(bookings: list):
     return builder.as_markup()
 
 
-def get_booking_detail_keyboard(booking_id: int):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Перенести", callback_data=f"reschedule_{booking_id}")],
-        [InlineKeyboardButton(text="❌ Отменить", callback_data=f"cancel_{booking_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="my_bookings")]
-    ])
+def get_booking_detail_keyboard(booking_id: int, is_admin: bool = False):
+    """Кнопки для карточки записи. is_admin=True - для админа"""
+    if is_admin:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📱 Написать клиенту", callback_data=f"admin_write_{booking_id}")],
+            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_confirm_{booking_id}")],
+            [InlineKeyboardButton(text="🔄 Изменить время", callback_data=f"admin_edit_time_{booking_id}")],
+            [InlineKeyboardButton(text="💅 Изменить услугу", callback_data=f"admin_edit_service_{booking_id}")],
+            [InlineKeyboardButton(text="❌ Удалить запись", callback_data=f"admin_delete_{booking_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_bookings")]
+        ])
+    else:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📱 Связаться", callback_data=f"client_contact_{booking_id}")],
+            [InlineKeyboardButton(text="🔄 Изменить время", callback_data=f"reschedule_{booking_id}")],
+            [InlineKeyboardButton(text="❌ Отменить запись", callback_data=f"cancel_{booking_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="my_bookings")]
+        ])
+
+
+def get_booking_card_text(booking, show_full_info: bool = True):
+    """Создать текст карточки записи"""
+    status = "⏳ Ожидает" if booking.status == "pending" else "✅ Подтверждена" if booking.status == "confirmed" else "❌ Отменена"
+    
+    text = (
+        f"📋 Запись №{booking.id}\n\n"
+        f"🕓 Статус: {status}\n\n"
+        f"👤 Имя: {booking.name or 'Не указано'}\n"
+        f"📱 Телефон: {booking.phone or 'Не указан'}\n"
+        f"🔗 Username: @{booking.username or 'Нет'}\n\n"
+        f"💅 Услуга: {booking.service.name}\n"
+        f"💰 Цена: {booking.service.price} ₽\n"
+        f"👩‍🎨 Мастер: {booking.master.name}\n\n"
+        f"📅 Дата: {booking.date.strftime('%d.%m.%Y')}\n"
+        f"🕐 Время: {booking.time.strftime('%H:%M')}\n"
+    )
+    
+    if show_full_info and booking.comment:
+        text += f"\n💬 Комментарий: {booking.comment}\n"
+    
+    text += f"\n🕓 Создано: {booking.created_at.strftime('%d.%m.%Y %H:%M')}"
+    
+    return text
+
+
+def get_client_booking_card_text(booking):
+    """Текст карточки для клиента"""
+    status = "⏳ Ожидает подтверждения" if booking.status == "pending" else "✅ Подтверждена"
+    
+    text = (
+        f"📋 Запись №{booking.id}\n"
+        f"Статус: {status}\n\n"
+        f"💅 {booking.service.name}\n"
+        f"👩‍🎨 Мастер: {booking.master.name}\n"
+        f"📅 {booking.date.strftime('%d.%m.%Y')}\n"
+        f"🕐 {booking.time.strftime('%H:%M')}"
+    )
+    
+    return text
 
 
 def get_back_to_bookings():

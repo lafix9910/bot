@@ -1,9 +1,10 @@
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from datetime import date, datetime
 import logging
 
-from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, delete_master, get_master_by_id, get_services, delete_service, get_service_by_id, create_service, get_booking_by_id
+from database import get_db, get_all_bookings, confirm_booking, cancel_booking, get_or_create_master, get_masters, delete_master, get_master_by_id, get_services, delete_service, get_service_by_id, create_service, get_booking_by_id, update_booking_service, delete_booking, reschedule_booking
 from keyboards import get_admin_menu, get_admin_bookings_keyboard, get_admin_booking_actions, get_back_main, get_masters_management_keyboard, get_services_management_keyboard
 from states import AdminAddMasterState, AdminWorkingHoursState, AdminAddServiceState
 from config import ADMIN_IDS
@@ -90,29 +91,30 @@ async def admin_booking_detail(callback: CallbackQuery):
     booking_id = int(callback.data.split("_")[-1])
     
     db = next(get_db())
-    bookings = get_all_bookings(db)
-    booking = next((b for b in bookings if b.id == booking_id), None)
+    booking = get_booking_by_id(db, booking_id)
     db.close()
     
     if not booking:
         await callback.answer("Запись не найдена")
         return
     
-    status = "⏳ Ожидает" if booking.status == "pending" else "✅ Подтверждена" if booking.status == "confirmed" else "❌ Отменена"
+    from keyboards.main import get_booking_card_text
+    text = get_booking_card_text(booking, show_full_info=True)
     
-    text = (
-        f"📋 Запись #{booking.id}\n\n"
-        f"👤 Клиент: @{booking.username or booking.full_name or 'Unknown'}\n"
-        f"✨ Услуга: {booking.service.name}\n"
-        f"💰 Цена: {booking.service.price} ₽\n"
-        f"👤 Мастер: {booking.master.name}\n"
-        f"📅 Дата: {booking.date.strftime('%d.%m.%Y')}\n"
-        f"🕐 Время: {booking.time.strftime('%H:%M')}\n"
-        f"📌 Статус: {status}"
-    )
-    
-    await callback.message.edit_text(text, reply_markup=get_admin_booking_actions(booking_id))
+    await callback.message.edit_text(text, reply_markup=get_admin_booking_detail_keyboard(booking_id))
     await callback.answer()
+
+
+def get_admin_booking_detail_keyboard(booking_id: int):
+    """Кнопки для карточки записи в админке"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📱 Написать клиенту", callback_data=f"admin_write_{booking_id}")],
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_confirm_{booking_id}")],
+        [InlineKeyboardButton(text="🔄 Изменить время", callback_data=f"admin_edit_time_{booking_id}")],
+        [InlineKeyboardButton(text="💅 Изменить услугу", callback_data=f"admin_edit_service_{booking_id}")],
+        [InlineKeyboardButton(text="❌ Удалить запись", callback_data=f"admin_delete_{booking_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_bookings")]
+    ])
 
 
 @router.callback_query(F.data.startswith("admin_confirm_"))
@@ -427,3 +429,277 @@ async def admin_add_service_desc(message: Message, state: FSMContext):
     
     await message.answer(f"✅ Услуга '{service.name}' за {service.price} ₽ добавлена!", reply_markup=get_admin_menu())
     await state.clear()
+
+
+# Обработчики для карточки записи админа
+@router.callback_query(F.data.startswith("admin_write_"))
+async def admin_write_client(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    booking_id = int(callback.data.split("_")[-1])
+    
+    db = next(get_db())
+    booking = get_booking_by_id(db, booking_id)
+    db.close()
+    
+    if not booking:
+        await callback.answer("Запись не найдена")
+        return
+    
+    # Открываем чат с пользователем
+    await callback.message.edit_text(
+        f"📱 Напишите клиенту:\n"
+        f"tg://user?id={booking.user_id}\n\n"
+        f"Или нажмите на ссылку выше.",
+        reply_markup=get_admin_booking_detail_keyboard(booking_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_edit_time_"))
+async def admin_edit_time_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    booking_id = int(callback.data.split("_")[-1])
+    
+    db = next(get_db())
+    booking = get_booking_by_id(db, booking_id)
+    if not booking:
+        await callback.answer("Запись не найдена")
+        db.close()
+        return
+    
+    master_id = booking.master_id
+    db.close()
+    
+    await state.update_data(booking_id=booking_id)
+    
+    from keyboards.calendar import get_calendar_keyboard
+    await callback.message.edit_text(
+        f"📅 Выберите новую дату для записи #{booking_id}:",
+        reply_markup=get_calendar_keyboard(master_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_edit_service_"))
+async def admin_edit_service(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    booking_id = int(callback.data.split("_")[-1])
+    
+    db = next(get_db())
+    booking = get_booking_by_id(db, booking_id)
+    if not booking:
+        await callback.answer("Запись не найдена")
+        db.close()
+        return
+    
+    services = get_services(db)
+    db.close()
+    
+    # Создаем клавиатуру с услугами
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    for service in services:
+        builder.button(
+            text=f"{service.name} — {service.price} ₽",
+            callback_data=f"admin_set_service_{booking_id}_{service.id}"
+        )
+    builder.button(text="◀️ Назад", callback_data=f"admin_booking_{booking_id}")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(
+        f"💅 Выберите новую услугу для записи #{booking_id}:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_set_service_"))
+async def admin_set_service(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    parts = callback.data.split("_")
+    booking_id = int(parts[-2])
+    new_service_id = int(parts[-1])
+    
+    db = next(get_db())
+    success, error, user_data = update_booking_service(db, booking_id, new_service_id)
+    
+    if success:
+        # Уведомляем клиента
+        try:
+            await callback.bot.send_message(
+                user_data["user_id"],
+                "🔔 Администратор изменил услугу в вашей записи.\n\n"
+                "Проверьте актуальную информацию в разделе 'Мои записи'."
+            )
+        except:
+            pass
+        
+        await callback.message.edit_text(
+            f"✅ Услуга изменена!",
+            reply_markup=get_admin_menu()
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ Ошибка: {error}",
+            reply_markup=get_admin_menu()
+        )
+    
+    db.close()
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_delete_"))
+async def admin_delete_booking(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    booking_id = int(callback.data.split("_")[-1])
+    
+    db = next(get_db())
+    success, user_data = delete_booking(db, booking_id)
+    
+    if success and user_data:
+        # Уведомляем клиента
+        try:
+            await callback.bot.send_message(
+                user_data["user_id"],
+                "❌ Ваша запись была удалена администратором.\n\n"
+                "Свяжитесь с нами для оформления новой записи."
+            )
+        except:
+            pass
+    
+    db.close()
+    
+    if success:
+        await callback.message.edit_text(
+            f"✅ Запись #{booking_id} удалена!",
+            reply_markup=get_admin_menu()
+        )
+    else:
+        await callback.message.edit_text(
+            "❌ Не удалось удалить запись",
+            reply_markup=get_admin_menu()
+        )
+    
+    await callback.answer()
+
+
+# Обработчик выбора даты при переносе админом
+@router.callback_query(F.data.startswith("calendar_"))
+async def admin_reschedule_date(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        return
+    
+    date_str = parts[2]
+    selected_date = date.fromisoformat(date_str)
+    
+    data = await state.get_data()
+    booking_id = data.get("booking_id")
+    
+    if not booking_id:
+        await callback.answer("Ошибка: ID записи не найден")
+        return
+    
+    db = next(get_db())
+    booking = get_booking_by_id(db, booking_id)
+    if not booking:
+        await callback.answer("Запись не найдена")
+        db.close()
+        return
+    
+    master_id = booking.master_id
+    
+    # Получаем свободные слоты
+    from database import get_available_slots
+    slots = get_available_slots(db, master_id, selected_date)
+    db.close()
+    
+    if not slots:
+        await callback.message.edit_text(
+            f"❌ Нет свободных слотов на {date_str}",
+            reply_markup=get_admin_menu()
+        )
+    else:
+        from keyboards.main import get_time_slots_keyboard
+        await callback.message.edit_text(
+            f"🕐 Выберите время:",
+            reply_markup=get_time_slots_keyboard(slots, date_str, master_id)
+        )
+    
+    await callback.answer()
+
+
+# Обработчик выбора времени при переносе
+@router.callback_query(F.data.startswith("time_"))
+async def admin_reschedule_time(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id, callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён")
+        return
+    
+    parts = callback.data.split("_")
+    date_str = parts[1]
+    time_str = parts[2]
+    master_id = int(parts[3])
+    
+    selected_time = datetime.strptime(time_str, "%H:%M").time()
+    selected_date = date.fromisoformat(date_str)
+    
+    data = await state.get_data()
+    booking_id = data.get("booking_id")
+    
+    if not booking_id:
+        await callback.answer("Ошибка: ID записи не найден")
+        return
+    
+    logger.info(f"Admin rescheduling booking {booking_id} to {date_str} {time_str}")
+    
+    db = next(get_db())
+    success, error, user_data = reschedule_booking(db, booking_id, selected_date, selected_time)
+    
+    if success and user_data:
+        # Уведомляем клиента
+        try:
+            await callback.bot.send_message(
+                user_data["user_id"],
+                f"🔔 Администратор перенёс вашу запись!\n\n"
+                f"📅 Новая дата: {date_str}\n"
+                f"🕐 Новое время: {time_str}\n\n"
+                f"Ждём вас!"
+            )
+        except:
+            pass
+    
+    db.close()
+    
+    if success:
+        await callback.message.edit_text(
+            f"✅ Время изменено! Клиент уведомлён.",
+            reply_markup=get_admin_menu()
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ Ошибка: {error}",
+            reply_markup=get_admin_menu()
+        )
+    
+    await state.clear()
+    await callback.answer()
