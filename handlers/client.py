@@ -6,7 +6,7 @@ import logging
 
 from database import get_db, get_services, get_masters, get_available_slots, create_booking, get_user_bookings, cancel_booking, get_booking_by_id, reschedule_booking
 from keyboards import get_main_menu, get_services_keyboard, get_masters_keyboard, get_time_slots_keyboard, get_calendar_keyboard, get_my_bookings_keyboard, get_booking_detail_keyboard, get_back_main, get_back_to_bookings, get_contacts_keyboard, get_help_keyboard
-from states import BookingState
+from states import BookingState, RescheduleState
 from config import ADMIN_IDS
 import config
 
@@ -451,10 +451,7 @@ async def cancel_user_booking(callback: CallbackQuery):
 async def reschedule_booking_start(callback: CallbackQuery, state: FSMContext):
     booking_id = int(callback.data.split("_")[1])
     
-    await state.update_data(booking_id=booking_id)
-    await state.set_state(BookingState.date)
-    
-    # Получаем ID мастера для календаря
+    # Получаем запись из базы
     db = next(get_db())
     booking = get_booking_by_id(db, booking_id)
     if not booking:
@@ -462,12 +459,19 @@ async def reschedule_booking_start(callback: CallbackQuery, state: FSMContext):
         db.close()
         return
     
+    # Сохраняем booking_id и master_id в state
+    await state.update_data(booking_id=booking_id, master_id=booking.master_id)
+    await state.set_state(RescheduleState.new_date)
+    
     master_id = booking.master_id
+    current_date = booking.date.strftime('%d.%m.%Y')
+    current_time = booking.time.strftime('%H:%M')
     db.close()
     
     from keyboards.calendar import get_calendar_keyboard
     await callback.message.edit_text(
-        "📅 Выберите новую дату:",
+        f"📅 Текущее время: {current_date} {current_time}\n\n"
+        f"Выберите новую дату:",
         reply_markup=get_calendar_keyboard(master_id)
     )
     await callback.answer()
@@ -526,26 +530,22 @@ async def contacts_handler(callback: CallbackQuery):
     await callback.answer()
 
 
-# FSM для изменения времени записи
-@router.callback_query(F.data.startswith("reschedule_"), BookingState.date)
+# FSM для изменения времени записи - выбор даты
+@router.callback_query(F.data.startswith("calendar_"), RescheduleState.new_date)
 async def reschedule_select_date(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
-    booking_id = int(parts[1])
     date_str = parts[2]
     selected_date = date.fromisoformat(date_str)
     
     await state.update_data(new_date=date_str, new_selected_date=selected_date)
+    await state.set_state(RescheduleState.new_time)
     
-    # Получаем мастера
-    db = next(get_db())
-    booking = get_booking_by_id(db, booking_id)
-    if not booking:
-        await callback.answer("Запись не найдена")
-        db.close()
+    data = await state.get_data()
+    master_id = data.get("master_id")
+    
+    if not master_id:
+        await callback.answer("Ошибка: мастер не найден")
         return
-    
-    master_id = booking.master_id
-    db.close()
     
     # Показываем свободные слоты
     db = next(get_db())
@@ -565,7 +565,7 @@ async def reschedule_select_date(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("time_"))
+@router.callback_query(F.data.startswith("time_"), RescheduleState.new_time)
 async def reschedule_select_time(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     date_str = parts[1]
